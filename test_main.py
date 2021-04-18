@@ -9,6 +9,7 @@ from tensorflow.keras.layers import Conv1D, MaxPooling1D, Dense, Dropout
 from tensorflow.keras.models import Sequential
 import matplotlib.pyplot as plt
 from math import prod
+import tensorflow.python.ops.numpy_ops.np_config as np_config
 
 # Uninstall old CUDA version, basically anything with a 10, and install
 # all 11s
@@ -89,8 +90,7 @@ class Model:
             length = prod(j)
             layer, i = i[:length], i[length:]
             weights.append(layer.reshape(j))
-        for j, weight in enumerate(weights):
-            self.model.get_layer(index=j).set_weights(weights=weight)
+        self.model.set_weights(weights=weights)
         return
 
 
@@ -111,6 +111,14 @@ class Optimizer:
         self._last_grad = curr_grad
         return loss_value, curr_grad
 
+    def ukf_loss(self, y_pred, y_real):
+        return self.loss_object(y_true=y_real, y_pred=y_pred)
+
+    def ukf_grad(self, model, predicted, targets):
+        with tf.GradientTape() as tape:
+            loss_value = self.ukf_loss(y_pred=predicted, y_real=targets)
+        return loss_value, tape.gradient(loss_value, model.get_trainable_variables())
+
     def get_weight_cov(self):
         weight_changes = np.array([])
         for i in self._last_grad:
@@ -122,21 +130,52 @@ def measurement_noise(predict, real):
     return np.outer((real - predict), (real-predict))
 
 
+def unzip(grad):
+    arr = np.empty(1)
+    for i in grad:
+        arr = np.append(arr, i.numpy())
+    return arr
+
+
 def main():
     x, y = gather_data()
-    # print('{} {}'.format(x.shape, type(x)))
-    # print('{} {}'.format(y.shape, type(y)))
     x_train, y_train, x_test, y_test = split_data(x, y)
+
     model = Model()
     opt = Optimizer()
-    print(type(model.get_model()))
-    epochs = 4
-    # error = np.array([])
-    # grad = np.array([])
+
+    epochs = 1
     for epoch in range(epochs):
         for i in range(len(x_train)):
-            loss_value, grad = opt.grad(model, np.array([x_train[i, :, :]]), np.array([y_train[i, :]]))
+            _, grad = opt.grad(model, np.array([x_train[i, :, :]]), np.array([y_train[i, :]]))
             opt.optimizer.apply_gradients((zip(grad, model.get_trainable_variables())))
+
+# TODO implement a heap type thing to only keep the last 4 weight vectors, gradient weight vectors, and measurement
+#      vectors
+    delta = unzip(grad)
+    old_weights = np.zeros((len(delta), 4))
+    old_errors = np.zeros((4, 4))
+    old_grads = np.zeros((len(delta), 4))
+    np_config.enable_numpy_behavior()
+    for i in range(len(x_train)):
+        _, grad = opt.grad(model, np.array([x_train[i, :, :]]), np.array([y_train[i, :]]))
+        opt.optimizer.apply_gradients(zip(grad, model.get_trainable_variables()))
+        delta = unzip(grad)
+
+        # print(f'old grads: {old_grads.shape} grad: {np.array([delta]).T.shape}')
+        old_grads = np.append(old_grads, np.array([delta]).T, axis=1)[:, 1:]
+        old_weights = np.append(old_weights, np.array([unzip(model.get_trainable_variables())]).T, axis=1)[:, 1:]
+        old_errors = np.append(old_errors, ((y_train[i, :] - model.predict(np.array([x_train[i, :, :]]),
+                                                                           training=False))[0]).T, axis=1)[:, 1:]
+
+    wt_mean = np.mean(old_weights, axis=1)
+    wt_covar = (old_weights - np.tile(wt_mean, (4, 1)).T) @ (old_weights - np.tile(wt_mean, (4, 1)).T) .T
+
+    proc_mean = np.mean(old_grads, axis=1)
+    proc_covar = (old_grads - np.tile(proc_mean, (4, 1)).T) @ (old_grads - np.tile(proc_mean, (4, 1)).T).T
+
+    m_mean = np.mean(old_errors, axis=1)
+    m_covar = (old_errors - np.tile(m_mean, (4, 1)).T) @ (old_errors - np.tile(m_mean, (4, 1)).T).T
     #         if epoch*len(x_train) + i % 250 == 0:
     #             error = np.append(error, loss_value.numpy())
     # plt.figure('MSE Loss over All Training')
@@ -150,32 +189,47 @@ def main():
     #     y_predict = model.predict(x_test[i, :, :], training=False)
     #     # Model takes in and spits out (4,4) arrays
 
-    ''' On the training set, it needs to be done sequentially; 
-    We initialize the model, train it and with testing, it needs to:
-        transition the weights first
-        calculate the gradient and add as process noise
-        then it needs to output the prediction
-        then the real needs to be combined
-        weight transition is done with  '''
+# todo calculate the process and measurement noise over the last 4 iterations; take mean and covariance based on that
+#    at least to start the ukf, after the ukf starts, the measurement and process noise are taken on the last 4
+#    the weight mean and covar will be calculated with the sigma points
     state, shape = model.get_weight_state()
-    ukf = UKF(mean=state, covariance=opt.get_weight_cov(), model=model)
-    m_noise = np.zeros(4)
-    sigma, mean_weights, covar_weights = ukf.calc_sigma_points(state, opt.get_weight_cov())
+    ukf = UKF(mean=wt_mean, covariance=wt_covar, model=model, shapes=shape)
+    sigma, mean_weights, covar_weights = ukf.calc_sigma_points(wt_mean, wt_covar)
     predicted_y = np.array([])
     for i in range(len(x_test)):
         # Predicts output based on current weight state
-        predict_output, predict_output_mean, predict_output_covar = ukf.output(shapes=shape, x=x_test[i, :, :],
+        predict_output, predict_output_mean, predict_output_covar = ukf.output(x=np.array([x_test[i, :, :]]),
                                                                                sigma=sigma, mean_weights=mean_weights,
                                                                                covar_weights=covar_weights,
-                                                                               measurement_noise=m_noise)
+                                                                               measurement_noise=m_mean,
+                                                                               measure_covar=m_covar)
         # Get and insert real values
         predicted_y = np.append(predicted_y, predict_output_mean)
         ukf.update(y_test[i, :], sigma, mean_weights, covar_weights, predict_output, predict_output_mean,
                    predict_output_covar)
-        m_noise = y_test[i, :] - predict_output_mean
-        _, grad = opt.grad(model, np.array([x_test[i, :, :]]), np.array([y_test[i, :]]))
+        ukf.output_mat.set_weights(shape, ukf.mean)
+
+        # Update all noise means and covars
+        grad = opt.grad(model, np.array([x_test[i, :, :]]), np.array([y_test[i, :]]))
+        grad = unzip(grad)
+        print(f'old grad {old_grads.shape} grad {grad.shape}')
+        old_grads = np.append(old_grads, np.array([grad]).T, axis=1)[:, 1:]
+        old_weights = np.append(old_weights, np.array([unzip(model.get_trainable_variables())]).T, axis=1)[:, 1:]
+        old_errors = np.append(old_errors, (y_train[i, :] - predict_output_mean.T).T, axis=1)[:, 1:]
+
+        wt_covar = (old_weights - np.tile(np.mean(old_weights, axis=1), (4, 1)).T) @ (old_weights - np.tile(np.mean(
+            old_weights, axis=1), (4, 1)).T).T
+        proc_covar = (old_grads - np.tile(np.mean(old_grads, axis=1), (4, 1)).T) @ (old_grads - np.tile(np.mean(
+            old_grads, axis=1), (4, 1)).T).T
+        m_mean = np.mean(old_errors, axis=1)
+        m_covar = (old_errors - np.tile(np.mean(old_errors, axis=1), (4, 1)).T) @ (old_errors - np.tile(np.mean(
+            old_errors, axis=1), (4, 1)).T).T
+
+        # This is where the state transition begins
         mean, covar = ukf.get_state()
-        sigma, mean_weights, covar_weights = ukf.calc_sigma_points(mean, covar)
+        sigma, mean_weights, covar_weights = ukf.calc_sigma_points(mean, wt_covar)
+        sigma = ukf.state_transition(sigma=sigma, mean_weights=mean_weights, covar_weights=covar_weights,
+                                     process_noise=grad, process_covar=proc_covar)
 
     predicted_y = predicted_y.reshape((4, -1))
     fig, ((p1, p2), (p3, p4)) = plt.subplots(2, 2)
