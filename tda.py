@@ -7,22 +7,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def calc_covars(model, opt, x, y, history):
-    x = x[-history:, :]
-    y = y[-history:]
-    weights = np.zeros((len(model.get_weight_state()[0]), history))
-    grads = np.zeros_like(weights)
-    measure = np.zeros(history)
-    for i in range(history):
-        grad = opt.grad(model=model, inputs=np.array([x[i, :]]), targets=np.array([y[i]]))[1]
-        opt.optimizer.apply_gradients((zip(grad, model.get_trainable_variables())))
-        delta = unzip(grad)
-        grads[:, i] = delta
-        weights[:, i] = model.get_weight_state()[0]
-        measure[i] = y[i] - model.predict(np.array([x[i, :]]))
-    return weights, grads, measure
-
-
 def main():
     td_session = login()
     lr = .0001

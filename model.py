@@ -1,7 +1,7 @@
 import numpy as np
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Dropout, Dense
-from math import prod
+from utils import zipup
 from tensorflow.keras.models import load_model
 
 
@@ -43,10 +43,5 @@ class Model:
         return ret, shapes
 
     def set_weights(self, shapes, i):
-        weights = []
-        for j in shapes:
-            length = prod(j)
-            layer, i = i[:length], i[length:]
-            weights.append(layer.reshape(j))
-        self.model.set_weights(weights=weights)
+        self.model.set_weights(weights=zipup(shapes=shapes, i=i))
         return
