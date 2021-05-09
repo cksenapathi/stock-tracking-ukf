@@ -1,11 +1,12 @@
 import numpy as np
 import tensorflow as tf
 from model import Model
-'''FUCK TRYNA MAKE THIS GENERAL WRITE IT FOR YOUR PURPOSE'''
+from optimizer import Optimizer
+from utils import *
 
 
 class UKF:
-    def __init__(self, mean, covariance, model: Model, alpha=.1, beta=2, kappa=.001):
+    def __init__(self, mean, covariance, model: Model, shapes, alpha=.8, beta=2, kappa=.001):
         self.mean = mean
         self.covar = covariance
         self.alpha = alpha
@@ -13,24 +14,43 @@ class UKF:
         self.kappa = kappa
         self.transition_mat = np.identity(len(mean))
         self.output_mat = model
+        self.shapes = shapes
 
     def get_state(self):
         return self.mean, self.covar
 
-    def calc_sigma_points(self, mean, covar):
+    def calc_sigma_points(self, mean, cov):
         # noinspection PyPep8Naming
         L = len(mean)
         lam = self.alpha ** 2 * (L + self.kappa) - L
         sigma = np.tile(mean, (2 * L + 1, 1))
-        mat = np.linalg.cholesky((L + lam) * np.abs(covar))
-a         sigma[0] = mean
-        sigma[1:L + 1, :] += mat
-        sigma[L + 1:, :] -= mat
-        mean_weights = np.append(np.array([lam / (L + lam)]),
-                                 np.tile(1 / (2 * (L + lam)), 2 * L))
-        covar_weights = np.append(np.array([lam / (L + lam) + (1 - self.alpha ** 2 + self.beta)]),
-                                  np.tile(1 / (2 * (L + lam)), 2 * L))
-        return sigma.T, mean_weights, covar_weights
+        if cov is None:
+            mat = np.zeros((L, L))
+        else:
+            try:
+                mat = (L + lam) * cov
+                mat = (mat + mat.T)/2
+                v = np.linalg.cholesky(mat + 5 * np.mean(np.diag(mat)) * np.eye(L))
+            except np.linalg.LinAlgError:
+                print('cholesky failed')
+                print(f'mean: {np.mean(cov)} covar: {np.cov(cov)}, \n{cov}')
+                print(f'trace: {np.sum(np.diag((mat + mat.T)/2))}, mean trace: {np.mean(np.diag((mat + mat.T)/2))}')
+                print(f'L + lam {L + lam}')
+                print(mat - mat.T)
+                exit(1)
+        sigma[0] = mean
+        sigma[1:L + 1, :] += v
+        sigma[L + 1:, :] -= v
+        mean_weights = np.zeros(2*L+1)
+        covar_weights = np.zeros(2*L+1)
+        mean_weights[0], covar_weights[0] = 1, 1
+        for i in range(1, 2*L+1):
+            mean_weights[i] = np.exp(-(((i % L)/L) ** 2))
+            covar_weights[i] = np.exp(-(((i % L)/L) ** 2))
+
+        # mean_weights = np.tile(np.array([1/(2*L+1)]), 2 * L + 1)
+        # covar_weights = np.tile(np.array([1/(2*L+1)]), 2 * L + 1)
+        return sigma.T, mean_weights/np.sum(mean_weights), covar_weights/np.sum(covar_weights)
 
     def set_state_transition(self, mat):
         if type(mat) is np.ndarray or type(mat) is tf.python.keras.engine.sequential.Sequential:
@@ -38,32 +58,18 @@ a         sigma[0] = mean
         else:
             print('Check the data type of the state transition function')
 
-    def state_transition(self, sigma, mean_weights, covar_weights, process_noise=None):
-        if process_noise is None:
-            process_noise = np.zeros(len(self.mean))
-        # Performs the potentially nonlinear state transition
-        # All sigma points are taken through the state transition and the new
-        # mean and covariance is computed based on the weights
-        # if type(self.transition_mat) is np.ndarray:
-        #     try:
-        new_sigma = self.transition_mat @ sigma
-        #     except ValueError:
-        #         print("The dimensions of sigma and transition matrix don't match")
-        # elif type(self.transition_mat) is tf.python.keras.engine.sequential.Sequential:
-        #     try:
-        #         new_sigma = self.transition_mat(sigma.T)
-        #     except Exception as e:
-        #         print(f'Tensorflow sucks: {e}')
-        # else:
-        #     print('Check the dimensions of your input the state transition')
-        #     raise TypeError("The type of the transition rule doesn't work")
-        new_mean = new_sigma @ mean_weights + process_noise
-        new_covar = ((new_sigma - new_mean) @ covar_weights) @ (new_sigma - new_mean).T + np.outer(process_noise,
-                                                                                                   process_noise)
+    def state_transition(self, sigma, mean_weights, covar_weights, process_noise, process_covar, opt: Optimizer):
+        opt.optimizer.apply_gradients(zip(zipup(self.shapes, process_noise), self.output_mat.get_trainable_variables()))
+        # delta = unzip(self.output_mat.get_trainable_variables()) - self.mean
+        new_mean = unzip(self.output_mat.get_trainable_variables())
+        new_covar = ((sigma - np.tile(new_mean, (np.max(sigma.shape), 1)).T) * covar_weights) @ \
+                    (sigma - np.tile(new_mean, (np.max(sigma.shape), 1)).T).T + process_covar
         new_covar /= (2 * len(sigma[0]) + 1)
-        return self.calc_sigma_points(mean=new_mean, covar=new_covar)
-        # self.predict_mean = new_mean
-        # self.predict_covar = new_covar
+        self.mean = new_mean
+        self.covar = new_covar
+        self.output_mat.set_weights(shapes=self.shapes, i=self.mean)
+
+        return self.calc_sigma_points(mean=new_mean, cov=new_covar)
 
     def set_output_method(self, mat):
         if type(mat) is np.ndarray or type(mat) is tf.python.keras.engine.sequential.Sequential:
@@ -71,23 +77,43 @@ a         sigma[0] = mean
         else:
             print('Check the data type of the state transition function')
 
-    def output(self, shapes, x, sigma, mean_weights, covar_weights, measurement_noise=None):
-        outputs = np.zeros((4, len(sigma)))
-        if measurement_noise is None:
-            measurement_noise = np.zeros(4)
-        for i in sigma:
-            self.output_mat.set_weights(weights=i)
+    def output(self, x, sigma, mean_weights, covar_weights, measurement_noise=None, measure_covar=None):
+        size = np.max(sigma.shape)
+        print(f'size {size}')
+        outputs = np.zeros(size)
+        print(f'sigma shape in output {sigma.shape}')
+        for i, sig in enumerate(sigma):
+            self.output_mat.set_weights(shapes=self.shapes, i=sig)
             outputs[i] = self.output_mat.predict(x=x, training=False)
+            print(f'output {outputs[i]}')
+            # print(outputs[:, i])
+        print(f'outputs: {outputs.shape} mean weights: {mean_weights.shape} m_noise: {measurement_noise.shape}')
         output_mean = outputs @ mean_weights + measurement_noise
-        output_covar = ((outputs - output_mean) @ covar_weights) @ (outputs - output_mean).T + \
-            np.outer(np.abs(measurement_noise), np.abs(measurement_noise))
+        print(f'outputs: {(outputs - np.tile(output_mean, (size, 1)).T).shape} mean weights: {covar_weights.shape} m_covar: {measure_covar.shape}')
+        output_covar = (outputs - np.tile(output_mean, (size, 1)).T) * covar_weights
+        print(output_covar.shape)
+        output_covar = output_covar @ (outputs - np.tile(output_mean, (size, 1)).T).T + measure_covar
+        print(f'output covar {output_covar}')
         return outputs, output_mean, output_covar
 
-    def update(self, measured_mean, weights_sigma, weight_mean, covar_weights, output_sigma, output_mean, output_covar):
-        cross_covar = ((weights_sigma - weight_mean) @ covar_weights) @ (output_sigma - output_mean).T
+    def update(self, measured_mean, param_sigma, mean_wts, covar_weights, output_sigma, output_mean, output_covar):
+        print(f'in update, output covar {output_covar} shape {output_covar.shape}')
+        param_mean = param_sigma @ mean_wts
+        cross_covar = ((param_sigma - np.tile(param_mean, (len(param_sigma), 1))) * covar_weights) @ \
+                      (output_sigma - np.tile(output_mean, (len(output_sigma.T), 1)).T).T
         kalman_gain = cross_covar @ np.linalg.inv(output_covar)
-        self.mean += kalman_gain @ (measured_mean - output_mean)
-        self.covar -= kalman_gain @ output_covar @ kalman_gain.T
+        print(measured_mean)
+        print(output_mean)
+        print((kalman_gain*(measured_mean - output_mean)).shape)
+        kalman_gain = np.reshape(kalman_gain, max(kalman_gain.shape))
+        print(self.mean.shape)
+        self.mean = self.mean + kalman_gain * (measured_mean - output_mean)
+        self.covar -= kalman_gain * output_covar * kalman_gain.T
+        print(self.mean)
+        self.output_mat.set_weights(shapes=self.shapes, i=self.mean)
+        return self.mean, self.shapes
 
-
-# state transition is just identity matrix, process noise is added from the gradient vector
+# In order to make this work, I need to be able to change the weights so that the output model in this one and the
+# transition model in the other one are the same weights. The other one is going to return the grad it believes it
+# should apply and this one will return the weights it thinks it should have. The process noise should be the grad from
+# the other one and the other one should take the weights of this one after
