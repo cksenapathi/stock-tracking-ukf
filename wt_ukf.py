@@ -57,13 +57,6 @@ class WeightUKF:
     def output_state(self, param_sigma, param_mean_wts, param_cov_wts, model_shapes, input_prices, target_price):
         param_sigma = param_sigma.T
         grad_sigma = np.zeros_like(param_sigma)
-        grad = np.array([])
-        # input sigma will be 9 vectors each of length 4, which will all be put through the same model
-        # the target will be the mean of the price calculated from the other ukf
-        # if my goal is to calculate the gradients as my output sigma points, then I just need the input sigma points
-        # based on the prices and then i can calculate the gradient for each one automatically, the only reason i need
-        # to do the state transition is to get the mean and covariance
-        for i in input_sigma:
             self.model.set_weights(model_shapes, i)
             grad_sigma[i, :] = self.opt.grad(self.model, input_prices, target_price)
         grad_mean = grad_sigma.T @ param_mean_weights
@@ -71,15 +64,6 @@ class WeightUKF:
             grad_sigma - np.tile(grad_mean.T, (max(grad_sigma.shape), 1))
         self.model.set_weights(model_shapes, self.mean)
         return grad_sigma, grad_mean, grad_cov
-    """ In the other one, the state and cov was based on the weights, and the price was predicted and updated
-        In this one, the state and cov is based on the price, and the weights must be predicted and updated
-        So the state transition is the output of the other one, and the output is the state transition of the other one?
-        No we need to convert from state to output, and for that one we applied the weights to the nn and then output it
-        for this one to convert from state to output, we need to take the gradient, but what do i use as the target?
-        the output would have to be the predicted output from the other one, and take the gradient for all predictions
-        after the various gradients, i take the mean and covariance of the gradient, so that I can find which one to add
-        then once i get the real price, i calculate the 'real' gradient and i calculate the kalman gain based on the
-        cross covariance of the price output and the gradients, then the mean is """
 
     def update_wt(self, input_prices, true_price, param_sigma, param_mean_wts, param_cov_weights, grad_sigma, grad_mean, grad_cov):
         param_mean = param_sigma @ param_mean_wts
