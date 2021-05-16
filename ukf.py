@@ -33,14 +33,19 @@ class UKF:
             try:
                 mat = (L + lam) * cov
                 mat = (mat + mat.T)/2
-                v = np.linalg.cholesky(mat + 5 * np.mean(np.diag(mat)) * np.eye(L))
+                v = np.linalg.cholesky(mat)
             except np.linalg.LinAlgError:
-                print('cholesky failed')
-                print(f'mean: {np.mean(cov)} covar: {np.cov(cov)}, \n{cov}')
-                print(f'trace: {np.sum(np.diag((mat + mat.T)/2))}, mean trace: {np.mean(np.diag((mat + mat.T)/2))}')
-                print(f'L + lam {L + lam}')
-                print(mat - mat.T)
-                exit(1)
+                try:
+                    mat = (L + lam) * cov
+                    mat = (mat + mat.T)/2
+                    v = np.linalg.cholesky(mat + 5 * np.mean(np.diag(mat)) * np.eye(L))
+                except np.linalg.LinAlgError:
+                    print('cholesky failed')
+                    print(f'mean: {np.mean(cov)} covar: {np.cov(cov)}, \n{cov}')
+                    print(f'trace: {np.sum(np.diag((mat + mat.T)/2))}, mean trace: {np.mean(np.diag((mat + mat.T)/2))}')
+                    print(f'L + lam {L + lam}')
+                    print(mat - mat.T)
+                    exit(1)
         sigma[0] = mean
         sigma[1:L + 1, :] += v
         sigma[L + 1:, :] -= v
