@@ -63,8 +63,9 @@ def main():
 
 
         # Updating the weight ukf
-        wt_ukf.update_wt(input_, measured_price, new_param_sigma, param_mean_wts, param_cov_weights, output_grad_sigma, output_grad_mean, output_grad_cov)
-
+        grad = wt_ukf.update_wt(input_, measured_price, new_param_sigma, param_mean_wts, param_cov_weights, output_grad_sigma, output_grad_mean, output_grad_cov)
+        wts = wt_ukf.model.get_weight_state()[0]
+        
         '''THIS IS WHERE I STOPPED EDITING'''
         # Changing all the historical data used for covariances
         grad_data = np.append(grad_data, grad, axis=1)[:, 1:]

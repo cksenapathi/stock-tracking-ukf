@@ -12,6 +12,7 @@ from utils import *
 class UKF:
     def __init__(self, mean, covariance, model: Model, shapes, alpha=.8, beta=2, kappa=.001):
         self.mean = mean
+        self.old_mean = mean
         self.covar = covariance
         self.alpha = alpha
         self.beta = beta
@@ -97,7 +98,9 @@ class UKF:
         # print(self.mean.shape)
         self.mean +=  kalman_gain * (measured_mean - output_mean)
         self.covar -= kalman_gain * output_covar * kalman_gain.T
-        return
+        grad = (self.mean - self.old_mean)/self.opt.lr
+        self.old_mean = self.mean
+        return grad
 
 # In order to make this work, I need to be able to change the weights so that the output model in this one and the
 # transition model in the other one are the same weights. The other one is going to return the grad it believes it
