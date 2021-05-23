@@ -12,7 +12,6 @@ from utils import *
 class UKF:
     def __init__(self, mean, covariance, model: Model, shapes, alpha=.8, beta=2, kappa=.001):
         self.mean = mean
-        self.old_mean = mean
         self.covar = covariance
         self.alpha = alpha
         self.beta = beta
@@ -34,44 +33,53 @@ class UKF:
             try:
                 mat = (L + lam) * cov
                 mat = (mat + mat.T)/2
-                v = np.linalg.cholesky(mat)
+                v = np.linalg.cholesky(mat).T
+                print(v)
             except np.linalg.LinAlgError:
                 try:
                     mat = (L + lam) * cov
                     mat = (mat + mat.T)/2
-                    v = np.linalg.cholesky(mat + 5 * np.mean(np.diag(mat)) * np.eye(L))
+                    v = np.linalg.cholesky(mat + 5 * np.mean(np.diag(mat)) * np.eye(L)).T
+                    print(v)
                 except np.linalg.LinAlgError:
-                    print('cholesky failed')
-                    print(f'mean: {np.mean(cov)} covar: {np.cov(cov)}, \n{cov}')
+                    print('price ukf cholesky failed')
+                    print(f'cov {cov}')
+                    print(f'mean: {np.mean(cov)} covar: {(L + lam) * cov}')
                     print(f'trace: {np.sum(np.diag((mat + mat.T)/2))}, mean trace: {np.mean(np.diag((mat + mat.T)/2))}')
                     print(f'L + lam {L + lam}')
-                    print(mat - mat.T)
+                    print((mat +mat.T)/2)
                     exit(1)
         sigma[0] = mean
         sigma[1:L + 1, :] += v
         sigma[L + 1:, :] -= v
         mean_weights = np.zeros(2*L+1)
         covar_weights = np.zeros(2*L+1)
-        mean_weights[0], covar_weights[0] = 1, 1
-        for i in range(1, 2*L+1):
-            mean_weights[i] = np.exp(-(((i % L)/L) ** 2))
-            covar_weights[i] = np.exp(-(((i % L)/L) ** 2))
+        # mean_weights[0], covar_weights[0] = 1, 1
+        # for i in range(1, 2*L+1):
+        #     mean_weights[i] = np.exp(-(((i % L)/L) ** 2))
+        #     covar_weights[i] = np.exp(-(((i % L)/L) ** 2))
 
-        # mean_weights = np.tile(np.array([1/(2*L+1)]), 2 * L + 1)
-        # covar_weights = np.tile(np.array([1/(2*L+1)]), 2 * L + 1)
-        return sigma.T, mean_weights/np.sum(mean_weights), covar_weights/np.sum(covar_weights)
+        mean_weights[0] = lam/(L + lam)
+        covar_weights[0] = (lam/(L + lam)) + (1- self.alpha**2 + self.beta)
+        for i in range(1, 2*L + 1):
+            mean_weights[i] = 1/(2*(L * lam))
+            covar_weights[i] = 1/(2*(L * lam))
+        return sigma.T, mean_weights, covar_weights
 
     def set_state_transition_weights(self, params):
-        self.transition_mat.set_weights(params, self.shapes)
+        self.transition_mat.set_weights(self.shapes, params)
 
     def state_transition(self, params, price_sigma, price_mean_wts, price_covar_wts):
         self.set_state_transition_weights(params=params)
-        new_states  = np.zeros((9,4))
+        new_states  = np.zeros_like(price_sigma)
         for i, sig in enumerate(price_sigma):
-            new_states[i, 1:] = sig[0:4]
+            new_states[i, 1:] = sig[0:3]
             new_states[i, 0] = self.transition_mat.predict(np.array([sig]))
-        self.mean = new_states.T @ price_mean_wts
-        self.covar = ((new_states.T - np.tile(new_mean, (1, 9))) * price_covar_wts) @ (new_states - np.tile(new_mean.T, (9,1)))
+        new_mean = new_states.T @ price_mean_wts
+        self.mean = new_mean
+        var = new_states - np.tile(new_mean, (9,1))
+        print(var.shape)
+        self.covar = ((new_states - np.tile(new_mean, (9,1))).T * price_covar_wts) @ (new_states - np.tile(new_mean, (9,1)))
         return self.calc_sigma_points(mean=self.mean, cov=self.covar)
 
     def set_output_method(self, mat):
@@ -88,19 +96,19 @@ class UKF:
 
     def update(self, measured_mean, state_sigma, state_mean_wts, state_cov_wts, output_sigma, output_mean, output_covar):
         state_mean = state_sigma @ state_mean_wts
-        cross_covar = ((state_sigma - np.tile(state_mean, (len(param_sigma), 1))) * covar_weights) @ \
-                      (output_sigma - np.tile(output_mean, (len(output_sigma.T), 1)))
-        kalman_gain = cross_covar @ np.linalg.inv(output_covar)
+        var1 = ((state_sigma - np.tile(state_mean, (max(state_sigma.shape), 1)).T) * state_cov_wts)
+        var2 = (np.array([output_sigma]) - np.tile(np.array([output_mean]), (max(output_sigma.shape), 1)).T)
+        print(f'left {var1.shape}, right {var2.shape}')
+        cross_covar = ((state_sigma - np.tile(state_mean, (max(state_sigma.shape), 1)).T) * state_cov_wts) @ (np.array([output_sigma]) - np.tile(np.array([output_mean]), (max(output_sigma.shape), 1)).T).T
+        kalman_gain = cross_covar @ np.linalg.inv(np.array([[output_covar]]))
         # print(measured_mean)
         # print(output_mean)
         # print((kalman_gain*(measured_mean - output_mean)).shape)
         # kalman_gain = np.reshape(kalman_gain, max(kalman_gain.shape))
         # print(self.mean.shape)
-        self.mean +=  kalman_gain * (measured_mean - output_mean)
-        self.covar -= kalman_gain * output_covar * kalman_gain.T
-        grad = (self.mean - self.old_mean)/self.opt.lr
-        self.old_mean = self.mean
-        return grad
+        self.mean +=  kalman_gain @ np.array([measured_mean - output_mean])
+        self.covar -= kalman_gain @ np.array([[output_covar]]) @ kalman_gain.T
+        return
 
 # In order to make this work, I need to be able to change the weights so that the output model in this one and the
 # transition model in the other one are the same weights. The other one is going to return the grad it believes it
