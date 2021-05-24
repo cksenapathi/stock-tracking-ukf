@@ -59,6 +59,7 @@ def main():
         # Getting the real value that is used to update both
         print(f'output price mean {output_price_mean} in iter {i}')
         measured_price = y_test[i, 0]
+        print(f'true price mean {measured_price} in iter {i}')
 
         # Updating the price ukf
         price_ukf.update(measured_price, price_sigma, price_mean_wts, price_cov_wts, output_price_sigma, output_price_mean, output_price_cov)
@@ -69,14 +70,14 @@ def main():
 
         '''THIS IS WHERE I STOPPED EDITING'''
         # Changing all the historical data used for covariances
-        print(grad_data[:, -1])
         grad_data = np.append(grad_data, np.array([grad]).T, axis=1)[:, 1:]
         err_data = np.append(err_data, output_price_mean - measured_price)[1:]
         price_data = np.append(price_data, np.array([input_]).T, axis=1)[:, 1:]
         wt_data = np.append(wt_data, np.array([wts]).T, axis=1)[:, 1:]
-        print(grad_data[:, -1])
 
+        print(values[i+7])
         values[i+7] = price_ukf.mean[0]
+        print(values[i+7])
         print(f'finished iter {i}')
         # During price ukf state transition, process noise and cov must be scaled by learning rate
 

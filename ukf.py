@@ -33,14 +33,17 @@ class UKF:
             try:
                 mat = (L + lam) * cov
                 mat = (mat + mat.T)/2
-                v = np.linalg.cholesky(mat).T
+                w, v = np.linalg.eigh(mat)
+                print(mat - v @ np.diag(w) @ v.T)
+                print(w)
                 print(v)
+                exit(0)
             except np.linalg.LinAlgError:
                 try:
                     mat = (L + lam) * cov
                     mat = (mat + mat.T)/2
                     v = np.linalg.cholesky(mat + 5 * np.mean(np.diag(mat)) * np.eye(L)).T
-                    print(v)
+                    print('fixed matrix \n {}'.format(v))
                 except np.linalg.LinAlgError:
                     print('price ukf cholesky failed')
                     print(f'cov {cov}')
