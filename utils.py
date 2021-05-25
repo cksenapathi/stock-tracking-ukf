@@ -11,6 +11,10 @@ def prod(iter):
     return val
 
 
+def lrflip(vec):
+    return np.reshape(np.fliplr(np.array([vec])), (-1,))
+
+
 def calc_covars(model, opt, x, y, history, param_hist):
     x = x[-param_hist:, :]
     y = y[-param_hist:]

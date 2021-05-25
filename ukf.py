@@ -30,31 +30,28 @@ class UKF:
         if cov is None:
             mat = np.zeros((L, L))
         else:
+            mat = (L + lam) * cov
+            mat = (mat + mat.T)/2
             try:
-                mat = (L + lam) * cov
-                mat = (mat + mat.T)/2
                 w, v = np.linalg.eigh(mat)
-                print(mat - v @ np.diag(w) @ v.T)
+                print('main thing worked')
                 print(w)
                 print(v)
-                exit(0)
             except np.linalg.LinAlgError:
                 try:
-                    mat = (L + lam) * cov
-                    mat = (mat + mat.T)/2
-                    v = np.linalg.cholesky(mat + 5 * np.mean(np.diag(mat)) * np.eye(L)).T
+                    w, v = np.linalg.eigh(mat + 2 * np.mean(np.diag(mat)) * np.eye(L))
                     print('fixed matrix \n {}'.format(v))
                 except np.linalg.LinAlgError:
-                    print('price ukf cholesky failed')
+                    print('price ukf eigen decomp failed')
                     print(f'cov {cov}')
                     print(f'mean: {np.mean(cov)} covar: {(L + lam) * cov}')
                     print(f'trace: {np.sum(np.diag((mat + mat.T)/2))}, mean trace: {np.mean(np.diag((mat + mat.T)/2))}')
                     print(f'L + lam {L + lam}')
                     print((mat +mat.T)/2)
                     exit(1)
-        sigma[0] = mean
-        sigma[1:L + 1, :] += v
-        sigma[L + 1:, :] -= v
+        w = np.sign(w) * np.sqrt(np.abs(w))
+        sigma[1:L + 1, :] += (v @ np.diag(w)).T
+        sigma[L + 1:, :] -= (v @ np.diag(w)).T
         mean_weights = np.zeros(2*L+1)
         covar_weights = np.zeros(2*L+1)
         # mean_weights[0], covar_weights[0] = 1, 1
@@ -65,9 +62,9 @@ class UKF:
         mean_weights[0] = lam/(L + lam)
         covar_weights[0] = (lam/(L + lam)) + (1- self.alpha**2 + self.beta)
         for i in range(1, 2*L + 1):
-            mean_weights[i] = 1/(2*(L * lam))
-            covar_weights[i] = 1/(2*(L * lam))
-        return sigma.T, mean_weights, covar_weights
+            mean_weights[i] = 1/(2*(L + lam))
+            covar_weights[i] = 1/(2*(L + lam))
+        return sigma.T, mean_weights/np.sum(mean_weights), covar_weights
 
     def set_state_transition_weights(self, params):
         self.transition_mat.set_weights(self.shapes, params)

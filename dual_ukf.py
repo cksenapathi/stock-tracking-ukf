@@ -32,13 +32,18 @@ def main():
     wts, shapes = model1.get_weight_state()
     values[0:4] = x_test[0, 0, :]
     values[4:7] = x_test[1:4,0,0]
+    print(values[:8])
+    exit(0)
     price_ukf = UKF(mean=price_mean, covariance=price_cov, model=model1, shapes=shapes)
     wt_ukf = WeightUKF(mean=model1.get_weight_state()[0], cov=np.cov(wt_data),
                        model=model1, shapes=shapes, opt=opt)
     # Calculating starting sigma points for the price and the grads
     for i in range(len(y_test)):
         input_ = values[i:i+4]
-
+        print(np.array([input_]))
+        print(np.reshape(np.fliplr(np.array([input_])), (-1,)))
+        exit(0)
+        # input_ = x_test[i, 0, :]
         price_sigma, price_mean_wts, price_cov_wts = price_ukf.calc_sigma_points(mean=input_, cov=price_ukf.covar)
 
         param_sigma, param_mean_wts, param_cov_wts = wt_ukf.calc_sigma_points(mean=wt_ukf.mean, cov=wt_ukf.cov)
@@ -74,6 +79,7 @@ def main():
         err_data = np.append(err_data, output_price_mean - measured_price)[1:]
         price_data = np.append(price_data, np.array([input_]).T, axis=1)[:, 1:]
         wt_data = np.append(wt_data, np.array([wts]).T, axis=1)[:, 1:]
+
 
         print(values[i+7])
         values[i+7] = price_ukf.mean[0]
