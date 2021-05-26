@@ -1,7 +1,7 @@
 # from td.client import TDClient
-import numpy as np
 import pandas as pd
 import math
+import numpy as np
 
 
 def prod(iter):
@@ -10,20 +10,26 @@ def prod(iter):
         val *= i
     return val
 
- 
-def calc_covars(model, opt, x, y, history):
-    x = x[-history:, :]
-    y = y[-history:]
-    weights = np.zeros((len(model.get_weight_state()[0]), history))
+
+def lrflip(vec):
+    return np.reshape(np.fliplr(np.array([vec])), (-1,))
+
+
+def calc_covars(model, opt, x, y, history, param_hist):
+    x = x[-param_hist:, :]
+    y = y[-param_hist:]
+    history = param_hist - history
+    weights = np.zeros((len(model.get_weight_state()[0]), param_hist))
     grads = np.zeros_like(weights)
-    measure = np.zeros(history)
-    for i in range(history):
+    measure = np.zeros(param_hist - history)
+    for i in range(param_hist):
         grad = opt.grad(model=model, inputs=np.array([x[i, :]]), targets=np.array([y[i]]))[1]
         opt.optimizer.apply_gradients((zip(grad, model.get_trainable_variables())))
         delta = unzip(grad)
         grads[:, i] = delta
         weights[:, i] = model.get_weight_state()[0]
-        measure[i] = y[i] - model.predict(np.array([x[i, :]]))
+        if i >= history:
+            measure[i - history] = y[i] - model.predict(np.array([x[i, :]]))
     return weights, grads, measure
 
 

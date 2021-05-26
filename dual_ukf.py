@@ -21,76 +21,78 @@ def main():
 
     opt = Optimizer()
     model1 = Model(filepath='open_model')
-    history = 10
-    wt_data, grad_data, err_data = calc_covars(model1, opt, x_test[:, 0, :], y_test[:, 0], history)
-    price_data = y_train[-10:, 0]
+    history = 5
+    param_hist = 69
+    wt_data, grad_data, err_data = calc_covars(model1, opt, x_test[:, 0, :], y_test[:, 0], history, param_hist)
+    price_data = x_train[-history:, 0, :].T
+    price_mean = price_data[:, -1]
+    price_cov = np.cov(price_data)
     lr = .001
-    values = np.zeros(len(x_test))
+    values = np.zeros(len(y_test)+7)
     wts, shapes = model1.get_weight_state()
     values[0:4] = x_test[0, 0, :]
-    price_ukf = UKF(mean=np.mean(wt_data, axis=1), covariance=np.cov(wt_data), model=model1, shapes=shapes)
-    wt_ukf = WeightUKF(mean=np.mean(x_test[0:10, 0, :], axis=0), cov=np.cov(x_test[0:10, 0, :].T),
-                       transition_model=model1, output_grad=opt)
+    values[4:7] = x_test[1:4,0,0]
+    print(values[:8])
+    exit(0)
+    price_ukf = UKF(mean=price_mean, covariance=price_cov, model=model1, shapes=shapes)
+    wt_ukf = WeightUKF(mean=model1.get_weight_state()[0], cov=np.cov(wt_data),
+                       model=model1, shapes=shapes, opt=opt)
     # Calculating starting sigma points for the price and the grads
-    param_sigma, param_mean_wts, param_cov_wts = price_ukf.calc_sigma_points(
-            mean=np.mean(wt_data, axis=1),
-            cov=np.cov(wt_data))
+    for i in range(len(y_test)):
+        input_ = values[i:i+4]
+        print(np.array([input_]))
+        print(np.reshape(np.fliplr(np.array([input_])), (-1,)))
+        exit(0)
+        # input_ = x_test[i, 0, :]
+        price_sigma, price_mean_wts, price_cov_wts = price_ukf.calc_sigma_points(mean=input_, cov=price_ukf.covar)
 
-    price_sigma, price_mean_wts, price_cov_wts = wt_ukf.calc_sigma_points(mean=wt_ukf.mean,
-                                                                              cov=wt_ukf.cov)
-    for i in range(4, len(x_test)):
-        input_ = np.array([values[i-4:i]])
+        param_sigma, param_mean_wts, param_cov_wts = wt_ukf.calc_sigma_points(mean=wt_ukf.mean, cov=wt_ukf.cov)
+
+        # Transition state variables
+        new_price_sigma = price_ukf.state_transition(wt_ukf.mean, price_sigma.T, price_mean_wts, price_cov_wts)[0]
+
+        new_param_sigma = wt_ukf.transition_state(param_sigma, param_mean_wts, param_cov_wts, np.mean(grad_data, axis=1), np.cov(grad_data))[0]
+
         # Calculating the output sigma points for the predicted price
-        pred_price_sigma, pred_price_mean, pred_price_cov = price_ukf.output(input_, param_sigma,
-                                                                             param_mean_wts,
-                                                                             param_cov_wts,
-                                                                             np.mean(err_data),
-                                                                             np.cov(err_data))
+        output_price_sigma, output_price_mean, output_price_cov = price_ukf.output(new_price_sigma, price_mean_wts, price_cov_wts, measurement_noise=np.mean(err_data), measure_covar=np.cov(err_data))
         # Should the input to the price ukf output be the market prices, because I'll always have the
         # last 4 market prices; I think this would be ideal, as that is what the nn is trained on
 
         # Calculating the output sigma points for the predicted gradient
-        pred_grad_sigma, pred_grad_mean, pred_grad_cov = wt_ukf.output_state(price_sigma,
-                                                                             pred_price_mean,
-                                                                             price_mean_wts,
-                                                                             price_cov_wts)
+        output_grad_sigma, output_grad_mean, output_grad_cov = wt_ukf.output_state(new_param_sigma, param_mean_wts, param_cov_wts, shapes, np.array([input_]), output_price_mean)
+                                                                      # update_wt(self, input_prices, true_price, param_sigma, param_mean_wts, param_cov_weights, grad_sigma, grad_mean, grad_cov)
         # Getting the real value that is used to update both
+        print(f'output price mean {output_price_mean} in iter {i}')
         measured_price = y_test[i, 0]
+        print(f'true price mean {measured_price} in iter {i}')
 
         # Updating the price ukf
-        wts, _ = price_ukf.update(measured_price, param_sigma, param_mean_wts, param_cov_wts, pred_price_sigma,
-                         pred_price_mean, pred_price_cov)
+        price_ukf.update(measured_price, price_sigma, price_mean_wts, price_cov_wts, output_price_sigma, output_price_mean, output_price_cov)
 
         # Updating the weight ukf
-        wt_ukf.state_shift.set_weights(shapes, wts)
-        grad = wt_ukf.update_wt(measured_price, price_sigma, price_mean_wts, price_cov_wts,
-                         pred_grad_sigma, pred_grad_mean, pred_grad_cov)
+        grad = wt_ukf.update_wt(np.array([input_]), measured_price, new_param_sigma, param_mean_wts, param_cov_wts, output_grad_sigma, output_grad_mean, output_grad_cov)
+        wts = wt_ukf.model.get_weight_state()[0]
 
+        '''THIS IS WHERE I STOPPED EDITING'''
         # Changing all the historical data used for covariances
-        grad_data = np.append(grad_data, grad, axis=1)[:, 1:]
-        err_data = np.append(err_data, pred_price_mean - measured_price)[1:]
-        price_data = np.append(price_data, measured_price)[1:]
-        wt_data = np.append(wt_data, wts, axis=1)[:, 1:]
-
-        # Recalculate state sigma points
-        param_sigma, param_mean_wts, param_cov_wts = price_ukf.calc_sigma_points(
-            mean=np.mean(wt_data, axis=1),
-            cov=np.cov(wt_data))
-
-        price_sigma, price_mean_wts, price_cov_wts = wt_ukf.calc_sigma_points(mean=price_data[-4:],
-                                                                              cov=wt_ukf.cov)
-
-        # Transition state variables
-        param_sigma = price_ukf.state_transition(param_sigma, param_mean_wts, param_cov_wts,
-                                                 grad, np.cov(lr * grad_data), opt)[0]
-
-        price_sigma = wt_ukf.transition_state(price_ukf.mean, price_ukf.shapes, price_sigma, price_mean_wts,
-                                price_cov_wts, np.mean(err_data), np.cov(err_data))[0]
+        grad_data = np.append(grad_data, np.array([grad]).T, axis=1)[:, 1:]
+        err_data = np.append(err_data, output_price_mean - measured_price)[1:]
+        price_data = np.append(price_data, np.array([input_]).T, axis=1)[:, 1:]
+        wt_data = np.append(wt_data, np.array([wts]).T, axis=1)[:, 1:]
 
 
-
-
+        print(values[i+7])
+        values[i+7] = price_ukf.mean[0]
+        print(values[i+7])
+        print(f'finished iter {i}')
         # During price ukf state transition, process noise and cov must be scaled by learning rate
+
+    plt.clf()
+    plt.plot(y_test, label='Market')
+    plt.plot(values[7:], label='Prediction')
+    plt.legend()
+    plt.show()
+
 
 
 # A dual UKF is based on there being a prediction on the weights as well, which my prediction
