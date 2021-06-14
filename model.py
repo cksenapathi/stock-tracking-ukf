@@ -6,9 +6,11 @@ from tensorflow.keras.models import load_model
 
 
 class Model:
-    def __init__(self, filepath=None):
+    def __init__(self, filepath=None, model=None):
         if filepath is not None:
             self.model = load_model(filepath=filepath)
+        elif model is not None:
+            self.model = model
         else:
             self.model = Sequential()
             self.model.add(Conv1D(filters=16, kernel_size=4, input_shape=(4, 4), activation='relu'))

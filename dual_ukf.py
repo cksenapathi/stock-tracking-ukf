@@ -7,6 +7,9 @@ from optimizer import Optimizer
 from utils import split_data, unzip, calc_covars
 import matplotlib.pyplot as plt
 from wt_ukf import WeightUKF
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from dyn_update import DynamicUpdate
 
 
 def main():
@@ -19,30 +22,59 @@ def main():
     x_val = np.load('x_val.npy')
     y_val = np.load('y_val.npy')
 
-    opt = Optimizer()
-    model1 = Model(filepath='open_model')
-    history = 5
-    param_hist = 69
-    wt_data, grad_data, err_data = calc_covars(model1, opt, x_test[:, 0, :], y_test[:, 0], history, param_hist)
+    # model1 = Model(filepath='open_model')
+    # I'm going to train a model for 1 epoch, which I
+    # will use to gather all the covariances
+    # after the one epoch, I'll let the model run through
+    # the other data and see how it performs
+    # with less accurate guesses, I think the gradients
+    # won't show signs of linear independence
+    model1 = Sequential()
+    model1.add(Dense(4))
+    model1.add(Dense(8))
+    model1.add(Dense(1))
+    lr = .001
+
+    opt = Optimizer(lr=lr)
+    # history = 5
+    # param_hist = 69
+    # wt_data, grad_data, err_data = calc_covars(model1, opt, x_test[:, 0, :], y_test[:, 0], history, param_hist)
     price_data = x_train[-history:, 0, :].T
     price_mean = price_data[:, -1]
     price_cov = np.cov(price_data)
-    lr = .001
     values = np.zeros(len(y_test)+7)
     wts, shapes = model1.get_weight_state()
     values[0:4] = x_test[0, 0, :]
     values[4:7] = x_test[1:4,0,0]
     print(values[:8])
-    exit(0)
+
     price_ukf = UKF(mean=price_mean, covariance=price_cov, model=model1, shapes=shapes)
     wt_ukf = WeightUKF(mean=model1.get_weight_state()[0], cov=np.cov(wt_data),
                        model=model1, shapes=shapes, opt=opt)
-    # Calculating starting sigma points for the price and the grads
+    '''
+        I need some ideas here
+        I can start with an entirely untrained model and going through the data will eventually train it
+        On the other hand I can train it one round, gather the various values and leave it running, and see what happens
+        I'm not sure what's going to happen, but i need to fix it
+
+    '''
+    wt_update = DynamicUpdate(len(model1.get_weight_state()[0]))
+    grad_update = DynamicUpdate(len(model1.get_weight_state()[0]))
+    price_update = DynamicUpdate(4)
+    err_update = DynamicUpdate(1)
+
+    # What do I use to update
+    wt_mean = model1.get_weight_state()[0]
+
+    wt_mean, wt_cov = wt_update.update(wt_mean)
+    price_mean, price_cov = price_update.update(values[:4])
+    grad_mean = np.zeros((len(wt_mean), 1))
+    grad_cov = np.zeros((len(wt_mean), len(wt_mean))) + .1 * np.eye(len(wt_mean))
     for i in range(len(y_test)):
         input_ = values[i:i+4]
         print(np.array([input_]))
         print(np.reshape(np.fliplr(np.array([input_])), (-1,)))
-        exit(0)
+
         # input_ = x_test[i, 0, :]
         price_sigma, price_mean_wts, price_cov_wts = price_ukf.calc_sigma_points(mean=input_, cov=price_ukf.covar)
 

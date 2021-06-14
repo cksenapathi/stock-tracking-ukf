@@ -11,6 +11,14 @@ def prod(iter):
     return val
 
 
+def update_mean(old_mean, new_data, count):
+    return old_mean + new_data / (count + 1)
+
+
+def update_cov(old_cov, new_mean, new_data, count):
+    return (count / (count + 1)) * old_cov + (count/((count + 1) ** 2)) * np.outer(new_mean - new_data, new_mean - new_data)
+
+
 def lrflip(vec):
     return np.reshape(np.fliplr(np.array([vec])), (-1,))
 
