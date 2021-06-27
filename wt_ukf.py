@@ -19,6 +19,7 @@ class WeightUKF:
     def calc_sigma_points(self, mean, cov):
         # noinspection PyPep8Naming
         L = len(mean)
+        mean = mean.T
         lam = self.alpha ** 2 * (L + self.kappa) - L
         sigma = np.tile(mean, (2 * L + 1, 1))
         if cov is None:
@@ -44,6 +45,8 @@ class WeightUKF:
                     print((mat +mat.T)/2)
                     exit(1)
         w = np.sign(w) * np.sqrt(np.abs(w))
+        print(v @ np.diag(w))
+        print(sigma[1:L+1, :].shape)
         sigma[1:L + 1, :] += (v @ np.diag(w)).T
         sigma[L + 1:, :] -= (v @ np.diag(w)).T
         mean_weights = np.zeros(2*L+1)

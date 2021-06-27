@@ -91,7 +91,7 @@ class UKF:
     def output(self, sigma, mean_wts, covar_wts, measurement_noise=None, measure_covar=None):
         outputs = sigma[0, :]
         output_mean = np.dot(outputs, mean_wts) + measurement_noise
-        output_covar = np.dot((outputs-output_mean) * covar_wts, (outputs-output_mean)) + measure_covar
+        output_covar = np.inner((outputs-output_mean) * covar_wts, (outputs-output_mean)) + measure_covar
         return outputs.T, output_mean, output_covar
 
     def update(self, measured_mean, state_sigma, state_mean_wts, state_cov_wts, output_sigma, output_mean, output_covar):
